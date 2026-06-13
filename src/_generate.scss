@@ -1,0 +1,659 @@
+@use "sass:map";
+@use "sass:meta";
+@use "sass:math";
+@use "var";
+@use "render";
+@use "validate";
+@use "utility";
+
+$REQUIRED: (
+    "blocks": (
+        "values": (),
+    ),
+    "properties": (
+        "values": (),
+    ),
+    "classes": (
+        "values": (),
+    ),
+    "steps": (
+        "meta": (
+            "step",
+            "from",
+            "to",
+        ),
+        "values": (),
+    ),
+    "fractions": (
+        "meta": (
+            "from",
+            "to",
+        ),
+        "values": (),
+    ),
+    "palettes": (
+        "values": (),
+    ),
+);
+
+/// Главный оркестратор конфигурации (Точка входа).
+/// Рекурсивно обходит переданную карту конфигурации модуля (например, $config для "effects" или "svg"),
+/// разделяет её на типы блоков (properties, steps, palettes) и обогащает каждый подконфиг
+/// служебными метаданными для последующей валидации и генерации атомарных CSS-классов.
+///
+/// @param {Map} $config - Полный конфигурационный Sass-map отдельного модуля.
+///   Ожидает обязательную структуру:
+///   - "name": Имя модуля (String).
+///   - Любые другие ключи-группы (List), например: "properties", "steps", "palettes", "classes".
+///
+/// @output Передает управление миксину `@include group($sub-config)`, отправляя туда модифицированный блок данных.
+///
+/// @example scss - Пример входных данных через переменную $config
+///   $config: (
+///       "name": "interactivity",
+///       "properties": ( ( "use": (...), "values": (...) ) )
+///   );
+///   @include by($config);
+///
+@mixin by($config) {
+    // Извлекаем имя модуля для трассировки ошибок, дефолтимся на "unknown" во избежание креша компиляции
+    $name: map.get($config, "name") or "unknown";
+
+    // Итерируемся по всем ключам конфигурации (например: 'name', 'properties', 'steps', 'palettes')
+    @each $group, $sub-configs in $config {
+        // Игнорируем служебный ключ "name", так как он не является списком конфигураций утилит
+        @if $group != "name" {
+            $index: 1; // Счётчик для определения порядкового номера блока внутри группы
+
+            // Обходим массив подконфигов (каждый элемент — это отдельный блок настроек утилит)
+            @each $sub-config in $sub-configs {
+                // Обогащаем локальный map служебными данными (контекстом).
+                // Это позволяет вложенным миксинам (валидаторам, генераторам) точно знать,
+                // в каком модуле, какой группе и на какой строчке произошла ошибка или генерируется класс.
+                $sub-config: map.set($sub-config, "name", $name);
+                $sub-config: map.set($sub-config, "group", $group);
+                $sub-config: map.set($sub-config, "index", $index);
+
+                // Делегируем сборку и обработку конкретной группы утилит нижестоящему миксину
+                @include group($sub-config);
+
+                $index: $index + 1; // Инкрементируем индекс для следующего блока в этой группе
+            }
+        }
+    }
+}
+
+/// Контроллер группы утилит (Диспетчер генерации).
+/// Валидирует переданный подконфиг, динамически определяет нужный миксин-генератор
+/// на основе имени группы и разворачивает утилиты во всех комбинациях вариантов:
+/// базовые классы, классы состояний (псевдоклассы), адаптивные классы (media queries)
+/// и их пересечения (например, `md:h:class`).
+///
+/// @param {Map} $config - Карта конфигурации отдельного блока, обогащенная метаданными оркестратора `by`.
+///   Ожидает ключи:
+///   - "group" (String) - Имя группы/генератора (например, "properties", "steps", "palettes").
+///   - "meta" (Map) - Метаданные блока (для steps: step, from, to, unit).
+///   - "use" (Map) - Флаги компиляции вариантов (breakpoints: Boolean, states: List/Boolean).
+///   - "values" (Map) - Набор утилит и их CSS-свойств.
+///
+/// @require {mixin} validate.config - Для проверки наличия обязательных полей.
+/// @require {map} $REQUIRED - Глобальная карта со схемами валидации для каждого типа группы.
+/// @require {mixin} utility.states - Для генерации оберток псевдоклассов (hover, focus...).
+/// @require {mixin} utility.breakpoints - Для генерации медиа-запросов адаптивности.
+///
+/// @output Динамически вызывает миксин, имя которого совпадает со значением `map.get($config, "group")`.
+///
+@mixin group($config) {
+    // 1. Валидация: проверяем подконфиг по схеме, соответствующей текущей группе (properties, steps и т.д.)
+    @include validate.config($config, map.get($REQUIRED, map.get($config, "group")));
+
+    // 2. Инициализация: безопасно извлекаем основные блоки данных, дефолтясь на пустые карты
+    $meta: map.get($config, "meta") or ();
+    $use: map.get($config, "use") or ();
+    $values: map.get($config, "values") or ();
+
+    // 3. Рефлексия (Динамический поиск): получаем ссылку на миксин-генератор,
+    // имя которого совпадает с именем группы (например, миксин `properties` или `steps`)
+    $group-mixin: meta.get-mixin(map.get($config, "group"));
+
+    // ГЕНЕРАЦИЯ БАЗОВЫХ КЛАССОВ
+    // Первичный вызов генератора без модификаторов состояний и брейкпоинтов
+    @include meta.apply($group-mixin, $meta, $values);
+
+    // ГЕНЕРАЦИЯ ЧИСТЫХ СОСТОЯНИЙ (например: h:opacity-100, f:outline-none)
+    @if map.get($use, "states") {
+        @include utility.states(map.get($use, "states")) using ($state-key, $state-selector) {
+            // Обогащаем $meta префиксами (`h\:`) и селекторами (`:hover`) для генератора
+            $state-meta: map.set($meta, "state-key", "#{$state-key}\\:");
+            $state-meta: map.set($state-meta, "state-selector", ":#{$state-selector}");
+
+            @include meta.apply($group-mixin, $state-meta, $values);
+        }
+    }
+
+    // ГЕНЕРАЦИЯ АДАПТИВНЫХ КЛАССОВ (Media Queries)
+    @if map.get($use, "breakpoints") {
+        @include utility.breakpoints() using ($bp-name) {
+            // Создаем метаданные с префиксом брейкпоинта (например, `md\:`)
+            $bp-meta: map.set($meta, "breakpoint", "#{$bp-name}\\:");
+
+            // Генерируем чистые адаптивные классы (например: md:w-1/2, lg:block)
+            @include meta.apply($group-mixin, $bp-meta, $values);
+
+            // КОМБИНАЦИЯ: АДАПТИВНОСТЬ + СОСТОЯНИЕ (например: md:h:bg-red-500)
+            // Если внутри адаптивного блока разрешены состояния, вкладываем их друг в друга
+            @if map.get($use, "states") {
+                @include utility.states(map.get($use, "states")) using ($state-key, $state-selector) {
+                    // Наслаиваем префиксы состояний поверх уже существующего префикса брейкпоинта
+                    $state-meta: map.set($bp-meta, "state-key", "#{$state-key}\\:");
+                    $state-meta: map.set($state-meta, "state-selector", ":#{$state-selector}");
+
+                    @include meta.apply($group-mixin, $state-meta, $values);
+                }
+            }
+        }
+    }
+}
+
+/// Генератор глобальных именованных блоков (на данный момент — CSS Keyframes).
+/// Принимает карту сложноструктурированных значений, перебирает её и динамически
+/// разворачивает валидные CSS-директивы `@keyframes` с их внутренними шагами и свойствами.
+///
+/// @param {Map} $meta - Метаданные блока конфигурации (передаются из контроллера `group`,
+///   могут содержать префиксы брейкпоинтов или состояний, хотя для keyframes они обычно игнорируются).
+/// @param {Map} $values - Карта зарегистрированных блоков.
+///   Ожидает строго структурированную трехмерную карту (3D Map):
+///   - Ключ 1-го уровня ($block-name): Тип блока (например, "keyframes").
+///   - Ключ 2-го уровня ($name): Уникальное имя анимации (например, "spin", "fade-in").
+///   - Ключ 3-го уровня ($selector): Шаг анимации (например, "from", "to", "0%", "50%").
+///   - Ключ 4-го уровня ($property): Набор CSS-свойств для этого шага.
+///
+/// @require {mixin} render.selector - Для компиляции шагов внутри keyframes (from/to/проценты).
+/// @require {mixin} render.property - Для безопасной генерации итоговых CSS-свойств и значений.
+///
+/// @example scss - Пример входного аргумента $values
+///   $values: (
+///       "keyframes": (
+///           "spin": (
+///               "from": ( "transform": "rotate(0deg)" ),
+///               "to": ( "transform": "rotate(360deg)" )
+///           )
+///       )
+///   );
+///   @include blocks((), $values);
+///
+/// @example css - Результат компиляции
+///   @keyframes spin {
+///       from { transform: rotate(0deg); }
+///       to { transform: rotate(360deg); }
+///   }
+///
+@mixin blocks($meta, $values) {
+    // 1. Уровень типа блока: перебираем типы (например, "keyframes", в будущем можно расширить для "font-face")
+    @each $block-name, $block-values in $values {
+        // 2. Уровень сущности: перебираем конкретные имена анимаций (например, 'spin', 'bounce')
+        @each $name, $selectors in $block-values {
+            // Проверяем тип блока. Разворачиваем CSS-директиву @keyframes только если ключ равен "keyframes"
+            @if $block-name == "keyframes" {
+                @keyframes #{$name} {
+                    // 3. Уровень селектора шага: перебираем этапы анимации (например, '0%', '50%', '100%')
+                    @each $selector, $properties in $selectors {
+                        // Рендерим селектор шага внутри тела анимации (использует интерполяцию)
+                        @include render.selector($selector) {
+                            // 4. Уровень CSS-свойств: перебираем пары свойство/значение для текущего шага
+                            @each $property, $value in $properties {
+                                @include render.property($property, $value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Генератор атомарных классов для группы статических свойств (`properties`).
+/// Перебирает карту утилит, собирает из метаданных контекста финальное имя класса
+/// с учетом адаптивности (брейкпоинтов) и интерактивности (состояний),
+/// после чего делегирует рендеринг утилите нижнего уровня.
+///
+/// @param {Map} $meta - Карта метаданных контекста компиляции (передается из контроллера `group`).
+///   Используется для конструирования селектора. Ожидает ключи:
+///   - "breakpoint" (String | Null) - Экранированный префикс медиа-запроса (например, `md\:`).
+///   - "state-key" (String | Null) - Экранированный префикс псевдокласса (например, `hover\:`).
+///   - "state-selector" (String | Null) - Сам псевдокласс, добавляемый к селектору (например, `:hover`).
+///
+/// @param {Map} $values - Карта свойств и классов, подлежащих генерации.
+///   Ожидает двумерную структуру (2D Map):
+///   - Ключ 1-го уровня ($property): Имя CSS-свойства (например, "position", "opacity").
+///   - Ключ 2-го уровня ($class): Имя генерируемого CSS-класса (например, "static", "opacity-50").
+///   - Значение ($value): Итоговое CSS-значение свойства (например, "static", "0.5").
+///
+/// @require {mixin} render.utility - Для конечного вывода сформированного класса и свойства в CSS.
+///
+/// @example scss - Входные данные при обработке модуля opacity в режиме ховера на брейкпоинте md
+///   $meta: (
+///       "breakpoint": "md\\:",
+///       "state-key": "hover\\:",
+///       "state-selector": ":hover"
+///   );
+///   $values: (
+///       "opacity": (
+///           "opacity-0": "0",
+///           "opacity-100": "1"
+///       )
+///   );
+///   @include properties($meta, $values);
+///
+/// @example css - Результат компиляции (внутри медиа-запроса md)
+///   .md\:hover\:opacity-0:hover {
+///       opacity: 0;
+///   }
+///   .md\:hover\:opacity-100:hover {
+///       opacity: 1;
+///   }
+///
+@mixin properties($meta, $values) {
+    // 1. Уровень свойства: перебираем CSS-свойства (например: 'display', 'position')
+    @each $property, $classes in $values {
+        // 2. Уровень утилиты: перебираем пары "название класса / значение" для этого свойства
+        @each $class, $value in $classes {
+            // Интерполируем и склеиваем строку селектора класса.
+            // Результат сборки: [брейкпоинт][префикс-состояния][имя-класса][псевдокласс]
+            // Пример сборки: "md\:" + "hover\:" + "block" + ":hover" => "md\:hover\:block:hover"
+            $rendered-class: "#{map.get($meta, "breakpoint")}#{map.get($meta, "state-key")}#{$class}#{map.get($meta, "state-selector")}";
+
+            // Передаем собранное имя класса, CSS-свойство и его значение в рендерер
+            @include render.utility($rendered-class, $property, $value);
+        }
+    }
+}
+
+/// Генератор составных утилит и комплексных атомарных классов (`classes`).
+/// Итерируется по карте кастомных классов, собирает финальное имя селектора
+/// (наслаивая брейкпоинты и состояния из метаданных контекста) и разворачивает
+/// блоки с множественными CSS-свойствами или переменными.
+///
+/// @param {Map} $meta - Карта метаданных контекста компиляции (передается из контроллера `group`).
+///   Используется для конструирования селектора. Ожидает ключи:
+///   - "breakpoint" (String | Null) - Экранированный префикс медиа-запроса (например, `lg\:`).
+///   - "state-key" (String | Null) - Экранированный префикс псевдокласса (например, `focus\:`).
+///   - "state-selector" (String | Null) - Сам псевдокласс, добавляемый к селектору (например, `:focus`).
+///
+/// @param {Map} $values - Карта комплексных классов, подлежащих генерации.
+///   Ожидает двумерную структуру (2D Map):
+///   - Ключ 1-го уровня ($class): Имя генерируемого CSS-класса (например, "translate-full", "clearfix").
+///   - Вложенное значение ($properties): Карта (Map) пар "свойство / значение" для текущего класса.
+///
+/// @require {mixin} render.class - Для создания внешней оболочки CSS-класса.
+/// @require {mixin} render.property - Для вывода пар свойство/значение внутри тела класса.
+///
+/// @example scss - Входные данные при обработке утилиты переноса осей в режиме ховера
+///   $meta: (
+///       "breakpoint": "md\\:",
+///       "state-key": "hover\\:",
+///       "state-selector": ":hover"
+///   );
+///   $values: (
+///       "translate-px": (
+///           "--translate-x": "1px",
+///           "--translate-y": "1px",
+///           "translate": "var(--translate-x) var(--translate-y)"
+///       )
+///   );
+///   @include classes($meta, $values);
+///
+/// @example css - Результат компиляции
+///   .md\:hover\:translate-px:hover {
+///       --translate-x: 1px;
+///       --translate-y: 1px;
+///       translate: var(--translate-x) var(--translate-y);
+///   }
+///
+@mixin classes($meta, $values) {
+    // 1. Уровень класса: перебираем названия утилит (например: 'translate-full', '-translate-x-px')
+    @each $class, $properties in $values {
+        // Интерполируем и склеиваем строку селектора класса.
+        // Результат сборки: [брейкпоинт][префикс-состояния][имя-класса][псевдокласс]
+        // Пример сборки: "md\:" + "hover\:" + "translate-full" + ":hover" => "md\:hover\:translate-full:hover"
+        $rendered-class: "#{map.get($meta, "breakpoint")}#{map.get($meta, "state-key")}#{$class}#{map.get($meta, "state-selector")}";
+
+        // Открываем блок селектора с помощью рендерера нижнего уровня
+        @include render.class($rendered-class) {
+            // 2. Уровень свойств: обходим внутреннюю карту CSS-свойств и переменных для данного класса
+            @each $property, $value in $properties {
+                @include render.property($property, $value);
+            }
+        }
+    }
+}
+
+/// Динамический генератор линейных диапазонов утилит (`steps`).
+/// На основе метаданных ($meta) запускает математический цикл от и до указанного значения с заданным шагом.
+/// Умеет генерировать три типа утилит в зависимости от формата значения свойства:
+/// 1. Простая строка — классическая утилита (одно свойство = один динамический шаг).
+/// 2. Список (List) — составная утилита (пачка свойств = одно и то же динамическое значение).
+/// 3. Карта (Map) — комплексная утилита с кастомной шаблонизацией (свойства = CSS-функции со встроенным шагом).
+///
+/// @param {Map} $meta - Контекст и математические параметры генерации. Ожидает ключи:
+///   - "from" (Number) - Стартовая точка цикла (например, 0 или -360).
+///   - "to" (Number) - Конечная точка цикла (например, 10 или 360).
+///   - "step" (Number) - Шаг инкремента (например, 0.125 или 5).
+///   - "unit" (String) - Единица измерения (например, "rem", "deg", "%" или "").
+///   - "breakpoint", "state-key", "state-selector" - Служебные префиксы адаптивности и состояний.
+///
+/// @param {Map} $values - Карта правил генерации имен классов и целевых CSS-свойств.
+///   Ключ ($class) может быть плоской строкой (например, "rotate") или шаблоном (например, "translate-*\\%").
+///
+/// @require {function} utility.escape-double - Для экранирования спецсимволов и точек в именах классов (например, `0\.5rem` -> `0\.5`).
+/// @require {function} utility.is-template - Проверяет, содержит ли имя класса паттерн-шаблон для замены.
+/// @require {function} utility.template - Подставляет числовое значение в шаблон имени класса или в тело CSS-свойства (`*`).
+/// @require {function} utility.is-list - Проверка типа данных на список Sass.
+/// @require {function} utility.is-map - Проверка типа данных на карту Sass.
+///
+/// @example scss - Пример обработки для простой строки (rotate)
+///   $meta: ("from": 0, "to": 10, "step": 5, "unit": "deg");
+///   $values: ("rotate": "rotate");
+///   // Результат CSS: .rotate-0 { rotate: 0deg; } .rotate-5 { rotate: 5deg; } ...
+///
+/// @example scss - Пример обработки для карты-шаблона (CSS-переменные + функции)
+///   $meta: ("from": 0, "to": 90, "step": 90, "unit": "deg");
+///   $values: ("rotate-x": ( "--rotate-x": "rotateX(*)" ));
+///   // Результат CSS: .rotate-x-0 { --rotate-x: rotateX(0deg); } .rotate-x-90 { --rotate-x: rotateX(90deg); }
+///
+@mixin steps($meta, $values) {
+    // 1. Обходим переданные базовые имена утилит
+    @each $class, $property in $values {
+        $current: map.get($meta, "from"); // Инициализируем указатель цикла
+
+        // 2. Математический цикл генерации числового ряда
+        @while $current <= map.get($meta, "to") {
+            // Формируем валидное CSS-значение, склеивая число с единицей измерения (например, 1.25rem)
+            $rendered-value: "#{$current}#{map.get($meta, "unit")}";
+            // Получаем модуль числа и экранируем его для безопасного использования в имени селектора (например, 0.125 -> 0\.125)
+            $escaped-value: utility.escape-double(math.abs($current));
+
+            // 3. Формирование локального имени класса
+            // Если имя класса является шаблоном (например, содержит '*'), подставляем значение внутрь строки.
+            // Иначе — стандартно склеиваем через дефис: [имя]-[значение]
+            // prettier-ignore
+            $rendered-class: if(
+                sass(utility.is-template($class)): "#{utility.template($class, $escaped-value)}";
+                else: "#{$class}-#{$escaped-value}"
+            );
+
+            // 4. Сборка полного селектора с учетом глобального контекста (брейкпоинты и состояния)
+            // Результат: md\:hover\:rotate-45:hover
+            $rendered-class: "#{map.get($meta, "breakpoint")}#{map.get($meta, "state-key")}#{$rendered-class}#{map.get($meta, "state-selector")}";
+
+            // 5. ВЕТВЛЕНИЕ ПО ТИПАМ ДАННЫХ (Рендеринг)
+
+            // Ветвь А: Если $property — это список (List), например: ("scroll-margin-top", "scroll-margin-bottom")
+            // Генерируем один класс, внутри которого одно и то же число присваивается массиву свойств.
+            @if utility.is-list($property) {
+                @include render.class($rendered-class) {
+                    @each $prop in $property {
+                        @include render.property($prop, $rendered-value);
+                    }
+                }
+            }
+
+            // Ветвь Б: Если $property — это карта (Map), например: ("--skew-x": "skewX(*)", "transform": "var(--skew-x)")
+            // Используется для сложных утилит, где динамическое значение нужно обернуть в CSS-функцию.
+            @else if utility.is-map($property) {
+                @include render.class($rendered-class) {
+                    @each $prop, $value in $property {
+                        // Подставляем текущий шаг с единицей измерения вместо знака плейсхолдера `*` в значение свойства
+                        $templated-value: utility.template(
+                            $value,
+                            #{$current}#{map.get($meta, "unit")}
+                        );
+                        @include render.property($prop, $templated-value);
+                    }
+                }
+            }
+
+            // Ветвь В: Если $property — это обычная плоская строка, например: "scroll-margin"
+            // Самый легкий и быстрый рендеринг классической единичной утилиты через атомарный рендерер.
+            @else {
+                @include render.utility($rendered-class, $property, $rendered-value);
+            }
+
+            // Инкрементируем счетчик цикла на шаг, заданный в конфигурации
+            $current: $current + map.get($meta, "step");
+        }
+    }
+}
+
+/// Динамический генератор дробных и сеточных утилит (`fractions`).
+/// На основе метаданных ($meta) запускает вложенный цикл (числитель внутри знаменателя)
+/// для генерации комбинаций дробей (например, от 1/2 до 11/12).
+///
+/// Поддерживает два режима рендеринга значения:
+/// 1. Математический (`divide: true`) — вычисляет процентное соотношение сторон (например, `1/2` -> `50%`).
+/// 2. Строковый (`divide: false`) — генерирует нативную CSS-дробь для свойств вроде `grid-column` (например, `1 / 2`).
+///
+/// Также поддерживает флаг `incorrect` для переключения между математически валидными
+/// правильными дробями (где числитель < знаменателя) и полными матрицами (включая избыточные дроби вроде 4/3).
+///
+/// @param {Map} $meta - Параметры математических циклов и режимов генерации. Ожидает ключи:
+///   - "from" (Number) - Стартовая точка для числителя и знаменателя (обычно 0 или 1).
+///   - "to" (Number) - Максимальный знаменатель сетки (например, 4 для четвертей, 12 для двенадцатиколонника).
+///   - "divide" (Boolean) - Флаг вычисления процентов. Если true, делит числитель на знаменатель.
+///   - "unit" (String) - Единица измерения при вычислении процентов (обычно "%").
+///   - "negative" (Boolean) - Флаг инверсии знака итогового вычисленного значения.
+///   - "incorrect" (Boolean) - Флаг генерации неправильных дробей (числитель может быть >= знаменателю).
+///   - "breakpoint", "state-key", "state-selector" - Служебные префиксы адаптивности и состояний.
+///
+/// @param {Map} $values - Карта базовых префиксов классов и целевых CSS-свойств.
+///   Ключ ($class) — это префикс класса (например, "w", "inset-x", "col-span").
+///   Значение ($property) — плоское CSS-свойство или список (List) свойств.
+///
+/// @require {function} utility.is-list - Проверка типа данных на список Sass.
+///
+/// @example scss - Групповой двенадцатиколонник по типу Tailwind (w-1/2, w-11/12...)
+///   $meta: ("from": 0, "to": 12, "divide": true, "unit": "%", "incorrect": false);
+///   $values: ("w": "width");
+///   // Результат CSS: .w-1\/2 { width: 50%; } .w-1\/3 { width: 33.33333%; } ...
+///
+/// @example scss - Сетки CSS Grid (col-start-1/2, col-start-2/3...)
+///   $meta: ("from": 1, "to": 5, "divide": false, "incorrect": true);
+///   $values: ("col-start": "grid-column-start");
+///   // Результат CSS: .col-start-1\/2 { grid-column-start: 1 / 2; } .col-start-4\/2 { grid-column-start: 4 / 2; }
+///
+@mixin fractions($meta, $values) {
+    // Обходим переданные базовые имена утилит (например, 'w', 'h', 'inset')
+    @each $class, $property in $values {
+        // 1. Определение стартового знаменателя.
+        // Если разрешены неправильные дроби, начинаем прямо с базового значения (обычно 0).
+        // Если нужны только правильные дроби, сдвигаем старт на +1, так как знаменатель не может быть равен 0 при старте числителя с 0.
+        // prettier-ignore
+        $denominator: if(
+            sass(map.get($meta, "incorrect")): map.get($meta, "from");
+            else: map.get($meta, "from") + 1
+        );
+
+        // ВНЕШНИЙ ЦИКЛ: Итерируемся по знаменателю (от стартовой точки до максимального разрешения сетки, например, 12)
+        @while $denominator <= map.get($meta, "to") {
+            $numerator: map.get(
+                $meta,
+                "from"
+            ); // Сбрасываем числитель на старт для каждого нового знаменателя
+
+            // ВНУТРЕННИЙ ЦИКЛ: Итерируемся по числителю.
+            // Условие 1 (при incorrect: true): числитель идет до максимального упора `to` независимо от знаменателя.
+            // Условие 2 (при incorrect: false): числитель строго меньше знаменателя (только правильные дроби: 1/2, 2/3 и т.д.)
+            @while (map.get($meta, "incorrect") and $numerator <= map.get($meta, "to")) or
+                (not map.get($meta, "incorrect") and $numerator < $denominator)
+            {
+                $value: null;
+
+                // РЕЖИМ А: Вычисление процентного соотношения (например, для width, height, left)
+                @if map.get($meta, "divide") {
+                    // Предотвращаем деление на ноль, если в конфигурации случайно совпали нули
+                    $div-denominator: if(
+                        sass($denominator == 0): 1; else: $denominator,
+                    );
+                    $value: math.div($numerator, $div-denominator) * 100;
+
+                    // Если утилита должна быть отрицательной (например, -inset-x-1/2)
+                    @if map.get($meta, "negative") {
+                        $value: $value * -1;
+                    }
+
+                    $value: "#{$value}#{map.get($meta, "unit")}";
+                }
+
+                // РЕЖИМ Б: Генерация строковой записи дроби (например, для grid-column: 1 / 3)
+                @else {
+                    $value: "#{$numerator} / #{$denominator}";
+                }
+
+                // Сборка полного селектора атомарного класса.
+                // Результат сборки содержит экранированный слэш: "md\:hover\:w-1\/2:hover"
+                $rendered-class: "#{map.get($meta, "breakpoint")}#{map.get($meta, "state-key")}#{$class}-#{$numerator}\\/#{$denominator}#{map.get($meta, "state-selector")}";
+
+                // ВЫВОД В CSS
+                // Если передана пачка свойств (например, "inset-x" управляет и left, и right одновременно)
+                @if utility.is-list($property) {
+                    @include render.class($rendered-class) {
+                        @each $prop in $property {
+                            @include render.property($prop, $value);
+                        }
+                    }
+                }
+
+                // Если передано одиночное свойство — рендерим максимально быструю атомарную утилиту
+                @else {
+                    @include render.utility($rendered-class, $property, $value);
+                }
+
+                $numerator: $numerator + 1; // Инкрементируем числитель
+            }
+
+            $denominator: $denominator + 1; // Инкрементируем знаменатель
+        }
+    }
+}
+
+/// Динамический генератор цветовых утилит на основе глобальной палитры (`palettes`).
+/// Обходит карту классов и сопоставляет их с глобальной переменной палитры цветов `var.$palette`.
+/// Автоматически обрабатывает два типа структуры цветов в палитре:
+/// 1. Карта (Map) оттенков — для именованных цветов со шкалой яркости (например, `blue-50`, `blue-500`).
+/// 2. Плоская строка/значение — для одиночных или системных цветов (например, `white`, `black`, `transparent`).
+///
+/// @param {Map} $meta - Карта метаданных контекста компиляции (передается из контроллера `group`).
+///   Используется для конструирования адаптивных и интерактивных селекторов. Ожидает ключи:
+///   - "breakpoint" (String | Null) - Экранированный префикс медиа-запроса (например, `xl\:`).
+///   - "state-key" (String | Null) - Экранированный префикс псевдокласса (например, `hover\:`).
+///   - "state-selector" (String | Null) - Сам псевдокласс, добавляемый к селектору (например, `:hover`).
+///
+/// @param {Map} $values - Карта связей между префиксами классов и CSS-свойствами.
+///   Ожидает плоскую структуру (1D Map):
+///   - Ключ ($class) — префикс генерируемого класса (например, "bg", "text", "border", "fill").
+///   - Значение ($property) — целевое CSS-свойство (например, "background-color", "color").
+///
+/// @require {variable} var.$palette - Глобальный Sass-map со всеми зарегистрированными в проекте цветами.
+/// @require {function} utility.is-map - Проверка типа данных на карту Sass для определения наличия оттенков.
+/// @require {mixin} palette - Специализированный рендерер нижнего уровня для вывода цветовых CSS-свойств.
+///
+/// @example scss - Глобальная палитра в var.$palette
+///   $palette: (
+///       "red": ( "500": "#f87171" ),
+///       "white": "#ffffff"
+///   );
+///
+/// @example scss - Вызов миксина для генерации фонов на ховере
+///   $meta: ( "breakpoint": "md\\:", "state-key": "hover\\:", "state-selector": ":hover" );
+///   $values: ( "bg": "background-color" );
+///   @include palettes($meta, $values);
+///
+/// @example css - Результат компиляции
+///   .md\:hover\:bg-red-500:hover { background-color: #f87171; }
+///   .md\:hover\:bg-white:hover { background-color: #ffffff; }
+///
+@mixin palettes($meta, $values) {
+    // 1. Уровень утилиты: перебираем типы генерируемых классов (например, 'bg' -> 'background-color')
+    @each $class, $property in $values {
+        // 2. Уровень глобальной палитры: обходим все зарегистрированные в системе цвета
+        @each $color, $shades in var.$palette {
+            // ВЕТВЬ А: Цвет имеет подкарту оттенков (например: 'blue' -> ('50': ..., '100': ..., '500': ...))
+            @if utility.is-map($shades) {
+                @each $number, $value in $shades {
+                    // Сборка трехсоставного имени класса: [префиксы]-[база]-[цвет]-[оттенок][суффикс]
+                    // Пример: "md\:" + "hover\:" + "bg" + "-" + "blue" + "-" + "500" + ":hover"
+                    $rendered-class: "#{map.get($meta, "breakpoint")}#{map.get($meta, "state-key")}#{$class}-#{$color}-#{$number}#{map.get($meta, "state-selector")}";
+
+                    // Делегируем вывод специализированному цветовому рендереру
+                    @include palette($rendered-class, $property, $value);
+                }
+            }
+
+            // ВЕТВЬ Б: Одиночный плоский цвет без шкалы оттенков (например: 'white', 'black', 'transparent')
+            @else {
+                // Сборка двухсоставного имени класса: [префиксы]-[база]-[цвет][суффикс]
+                // Пример: "text" + "-" + "white" => "text-white"
+                $rendered-class: "#{map.get($meta, "breakpoint")}#{map.get($meta, "state-key")}#{$class}-#{$color}#{map.get($meta, "state-selector")}";
+
+                // Передаем плоское значение ($shades здесь является строкой с цветом) в рендерер
+                @include palette($rendered-class, $property, $shades);
+            }
+        }
+    }
+}
+
+/// Специализированный рендерер цветовых утилит (`palette`).
+/// Принимает сформированное имя класса, целевое свойство (или карту свойств) и итоговое значение цвета.
+/// Поддерживает два режима вывода в зависимости от типа аргумента `$property`:
+/// 1. Обычная строка — классический атомарный вывод (одно свойство = один цвет).
+/// 2. Карта (Map) — комплексный вывод пачки свойств с возможностью шаблонизации цвета через замену плейсхолдера `*`.
+///
+/// Используется как мост между генератором `palettes` и базовыми рендерерами `render.*`.
+///
+/// @param {String} $class - Полностью собранное имя CSS-класса утилиты (включая все экранированные префиксы и суффиксы).
+/// @param {String | Map} $property - Целевое CSS-свойство (строка) или карта (Map) пар "свойство / шаблон-значения".
+/// @param {String} $value - Итоговое значение цвета (HEX, RGB, HSL или ключевое слово вроде `transparent`).
+///
+/// @require {function} utility.is-map - Проверка типа данных на карту Sass.
+/// @require {function} utility.template - Подставляет значение цвета вместо знака плейсхолдера `*` в шаблон CSS-свойства.
+/// @require {mixin} render.class - Для создания внешней оболочки составного CSS-класса.
+/// @require {mixin} render.property - Для вывода пар свойство/значение внутри тела класса.
+/// @require {mixin} render.utility - Для быстрого вывода стандартных атомарных утилит.
+///
+/// @example scss - Пример А: Стандартный атомарный вывод (Передана строка свойства)
+///   @include palette("bg-red-500", "background-color", "#f87171");
+///   // Результат CSS: .bg-red-500 { background-color: #f87171; }
+///
+/// @example scss - Пример Б: Комплексный вывод с поддержкой RGBA-переменных прозрачности (Передана карта-шаблон)
+///   $property-map: (
+///       "--tw-bg-opacity": "1",
+///       "background-color": "rgba(*, var(--tw-bg-opacity))"
+///   );
+///   @include palette("bg-blue-500", $property-map, "59, 130, 246"); // Цвет передан в формате RGB-компонентов
+///   // Результат CSS:
+///   // .bg-blue-500 {
+///   //     --tw-bg-opacity: 1;
+///   //     background-color: rgba(59, 130, 246, var(--tw-bg-opacity));
+///   // }
+///
+@mixin palette($class, $property, $value) {
+    // ВЕТВЬ А: Если аргумент $property является картой (Map).
+    // Применяется для сложных утилит, требующих модификации цвета или управления переменными прозрачности.
+    @if utility.is-map($property) {
+        // Открываем блок CSS-селектора
+        @include render.class($class) {
+            // Итерируемся по внутренней карте шаблонов свойств
+            @each $prop, $v in $property {
+                // Подставляем значение цвета вместо знака плейсхолдера `*` в строку шаблона
+                // и выводим готовое CSS-свойство
+                @include render.property($prop, utility.template($v, $value));
+            }
+        }
+    }
+
+    // ВЕТВЬ Б: Если аргумент $property — обычная плоская строка (например, "color" или "fill").
+    // Выполняет максимально быструю и легкую компиляцию стандартной одиночной утилиты.
+    @else {
+        @include render.utility($class, $property, $value);
+    }
+}

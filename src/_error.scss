@@ -1,0 +1,18 @@
+/// Системный валидатор ядра фреймворка.
+/// Прерывает компиляцию через @error, формируя лаконичный и структурированный
+/// четырехуровневый путь к пропущенному полю в конфигурации модуля.
+///
+/// @group Error
+/// @access public
+///
+/// @param {String} $config-name - Имя родительского модуля (напр., 'grid', 'padding').
+/// @param {String} $group-name - Имя генератора утилит (напр., 'properties', 'steps', 'fractions').
+/// @param {Number} $config-index - Порядковый номер (индекс) блока конфигурации внутри группы.
+/// @param {String} $parameter-name - Имя пропущенного обязательного параметра (обычно 'values').
+///
+/// @example scss - Пример вызова утилиты
+///   @include error.required-field-is-missing("grid", "steps", 1, "values");
+///   // Вывод в консоли сборщика: Error: "Отсутствует обязательное поле 'grid::steps::1::values'."
+@mixin required-field-is-missing($config-name, $group-name, $config-index, $parameter-name) {
+    @error "Отсутствует обязательное поле '#{$config-name}::#{$group-name}::#{$config-index}::#{$parameter-name}'.";
+}

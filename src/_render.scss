@@ -1,0 +1,70 @@
+/// Специализированная обертка для генерации стилей класса.
+/// Автоматически подставляет точку перед переданным именем и вызывает базовый миксин селектора.
+///
+/// @group Render
+/// @access public
+///
+/// @param {String} $class - Имя CSS-класса без ведущей точки (напр., 'flex', 'w-full').
+///
+/// @requires {mixin} selector
+@mixin class($class) {
+    .#{$class} {
+        @content;
+    }
+}
+
+/// Атомарный генератор CSS-свойств.
+/// Выводит прямое объявление свойства и его значения в текущий контекст.
+///
+/// @group Render
+/// @access public
+///
+/// @param {String} $property - Имя CSS-свойства (напр., 'margin-top', 'display').
+/// @param {*} $value - Значение CSS-свойства (напр., '1rem', 'block').
+@mixin property($property, $value) {
+    #{$property}: #{$value};
+}
+
+/// Высокоуровневый атомарный рендерер стандартных утилит.
+/// Комбинирует генерацию класса и CSS-свойства внутри него, создавая готовую служебную утилиту.
+///
+/// @group Render
+/// @access public
+///
+/// @param {String} $class - Имя генерируемого CSS-класса (напр., 'd-block').
+/// @param {String} $property - Имя CSS-свойства, инкапсулированного в утилиту (напр., 'display').
+/// @param {*} $value - Применяемое значение свойства (напр., 'block').
+///
+/// @requires {mixin} class
+/// @requires {mixin} property
+@mixin utility($class, $property, $value) {
+    .#{$class} {
+        #{$property}: #{$value};
+    }
+}
+
+/// Генерирует изолированный CSS-блок с произвольным селектором.
+/// Используется в качестве обертки для динамического создания правил или
+/// интерполяции сложных селекторов, переданных в виде строк.
+///
+/// @param {String | Selector} $selector - Целевой CSS-селектор (класс, ID, тег или комбинированный селектор).
+///
+/// @content Внутри миксина передаются CSS-свойства, которые должны быть применены к указанному селектору.
+///
+/// @example scss - Использование миксина
+///   @include selector(".my-custom-class") {
+///       display: flex;
+///       opacity: 1;
+///   }
+///
+/// @example css - Результат компиляции
+///   .my-custom-class {
+///       display: flex;
+///       opacity: 1;
+///   }
+///
+@mixin selector($selector) {
+    #{$selector} {
+        @content;
+    }
+}

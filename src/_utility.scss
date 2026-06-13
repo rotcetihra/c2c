@@ -1,0 +1,171 @@
+@use "sass:math";
+@use "sass:color";
+@use "sass:string";
+@use "sass:meta";
+@use "sass:list";
+@use "var";
+@use "render";
+
+/// Экранирует точку в десятичных числах для корректного использования в именах CSS-классов.
+/// Превращает значения типа '0.5' в '0\.5', что позволяет браузеру
+/// воспринимать всю строку как единый селектор.
+///
+/// @group Utility
+/// @access public
+///
+/// @param {Number | String} $double - Число или строка, содержащая десятичную точку.
+///
+/// @return {String} Экранированная строка, готовая для использования в селекторе.
+@function escape-double($double) {
+    $string: #{$double};
+
+    @if string.index($string, ".") {
+        $index: string.index($string, ".");
+        $string: string.insert($string, "\\", $index);
+    }
+
+    @return $string;
+}
+
+/// Функция-шаблонизатор для динамической подстановки значений в строки.
+/// Находит первое вхождение маркерного символа (из `var.$template`) и заменяет его
+/// на переданное значение, разделяя и склеивая строки. Если маркер не найден,
+/// возвращает исходную строку без изменений.
+///
+/// @group Utility
+/// @access public
+///
+/// @param {String} $string - Строка-шаблон, содержащая маркер подстановки (напр., 'cols-{}').
+/// @param {String | Number} $value - Значение, которое необходимо встроить вместо маркера (напр., 12 или 'auto').
+///
+/// @return {String} Результирующая строка с подставленным значением.
+///
+/// @requires {variable} var.$template
+/// @requires {function} string.index
+/// @requires {function} string.slice
+@function template($string, $value) {
+    $result: $string;
+
+    @while (string.index($result, var.$template)) {
+        $index: string.index($result, var.$template);
+        $result: string.slice($result, 1, $index - 1) +
+            $value +
+            string.slice($string, $index + 1, -1);
+    }
+
+    @return $result;
+}
+
+/// Предикат для проверки строки на наличие шаблона (интерполяционного маркера).
+/// Возвращает позицию первого вхождения маркерного символа или null, если он отсутствует.
+///
+/// @group Utility
+/// @access public
+///
+/// @param {String} $string - Проверяемая строка (напр., 'cols-count-{}').
+///
+/// @return {Number | Null} Индекс начала шаблона (начиная с 1) или null.
+///
+/// @requires {variable} var.$template
+/// @requires {function} string.index
+@function is-template($string) {
+    @return string.index($string, var.$template);
+}
+
+/// Предикат для проверки, является ли переданное значение списком (List).
+/// Возвращает true, если тип данных соответствует списку, иначе — false.
+///
+/// @group Utility
+/// @access public
+///
+/// @param {*} $value - Любое проверяемое значение.
+///
+/// @return {Boolean} Результат проверки типа данных.
+///
+/// @requires {function} meta.type-of
+@function is-list($value) {
+    @return meta.type-of($value) == "list";
+}
+
+/// Предикат для проверки, является ли переданное значение картой (Map).
+/// Возвращает true, если тип данных соответствует структуре "ключ-значение", иначе — false.
+///
+/// @group Utility
+/// @access public
+///
+/// @param {*} $value - Любое проверяемое значение.
+///
+/// @return {Boolean} Результат проверки типа данных.
+///
+/// @requires {function} meta.type-of
+@function is-map($value) {
+    @return meta.type-of($value) == "map";
+}
+
+/// Предикат для проверки значения на пустоту.
+/// Возвращает true, если значение равно null, либо представляет собой
+/// пустые скобки () (которые в Sass являются одновременно пустым списком и пустой картой).
+///
+/// @group Utility
+/// @access public
+///
+/// @param {*} $value - Любое проверяемое значение.
+///
+/// @return {Boolean} Результат проверки на пустоту.
+@function is-empty($value) {
+    @return $value == null or $value == ();
+}
+
+/// Обертка для генерации адаптивных утилит (Media Queries).
+/// Проходит по карте брейкпоинтов и создает медиа-условия min-width.
+///
+/// @group Utility
+/// @param {String} $bp-name - Имя брейкпоинта (напр., 'sm', 'md', 'lg').
+///
+/// @requires {variable} var.$breakpoints - Карта вида ('sm': 640px, 'md': 768px).
+///
+/// @example scss - Использование миксина
+///   @include breakpoints using ($name) {
+///     .#{$name}\:flex-row { flex-direction: row; }
+///   }
+@mixin breakpoints {
+    @each $bp-name, $bp-width in var.$breakpoints {
+        @media (min-width: $bp-width) {
+            @content ($bp-name);
+        }
+    }
+}
+
+/// Управляющий middleware-миксин для генерации интерактивных состояний (псевдоклассов).
+///
+/// Обходит глобальную карту зарегистрированных состояний, бережно изолирует ховер-эффекты
+/// внутри медиа-запроса `@media (hover: hover)` для предотвращения «залипания» на сенсорных экранах,
+/// а также поддерживает строгую фильтрацию генерации через белый список (`$only`).
+/// На лету пробрасывает ключи и селекторы состояний в дочерний `@content`.
+///
+/// @group Core
+/// @access public
+///
+/// @param {List | Null} $only [null] - Белый список разрешенных ключей состояний (например, `("h", "f", "a")`). Если `null`, генерируются все доступные состояния.
+///
+/// @output Возвращает динамический контекст стилей, обоернутый в правила псевдоклассов, передавая наверх:
+///   - `$state-key` {String} - Экранированный префикс для имени класса (напр., `h`)
+///   - `$state` {String} - Чистый CSS-селектор псевдокласса (напр., `hover`)
+///
+/// @requires {variable} var.$states
+/// @requires {function} is-list
+/// @requires {function} list.index
+@mixin states($only: null) {
+    @each $state-key, $state in var.$states {
+        @if (not is-list($only)) or (list.index($only, $state-key)) {
+            // Защита мобильного UX: hover-стили не должны срабатывать и «залипать» на смартфонах
+            @if $state == "hover" {
+                @media (hover: hover) {
+                    @content ($state-key, $state);
+                }
+            } @else {
+                @content ($state-key, $state);
+            }
+        }
+    }
+}

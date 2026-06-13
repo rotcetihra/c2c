@@ -1,0 +1,46 @@
+@use "sass:map";
+@use "error";
+
+/// Валидирует конфигурационный Sass-map на наличие обязательных полей первого и второго уровней вложенности.
+/// В случае отсутствия поля вызывает кастомную функцию логирования ошибок.
+///
+/// @param {Map} $config - Проверяемая карта конфигурации (например, отдельный блок свойств, шагов или палитр).
+///   Ожидает наличие служебных полей для формирования понятного трейса ошибки:
+///   - "name" (String) - Имя конфигурации.
+///   - "group" (String) - Группа (properties, steps, palettes и т.д.).
+///   - "index" (Number) - Индекс текущего блока в массиве.
+///
+/// @param {Map} $required-fields - Карта обязательных полей, где:
+///   - Ключ (String) - Имя обязательного верхнеуровневого поля (например, "meta", "use", "values").
+///   - Значение (List) - Список обязательных подполей (например, ("step", "from", "to")).
+///
+/// @example scss
+///   $required: ("meta": ("step", "from", "to"), "values": ());
+///   @include config($current-step-map, $required);
+///
+@mixin config($config, $required-fields) {
+    // Перебираем верхнеуровневые обязательные поля (например: 'meta', 'use')
+    @each $field, $sub-fields in $required-fields {
+        // Проверяем наличие основного поля на первом уровне $config
+        @if not map.get($config, $field) {
+            @include error.required-field-is-missing(
+                map.get($config, "name"),
+                map.get($config, "group"),
+                map.get($config, "index"),
+                $field
+            );
+        }
+
+        // Перебираем и проверяем вложенные обязательные подполя
+        @each $sub-field in $sub-fields {
+            @if not map.get($config, $field, $sub-field) {
+                @include error.required-field-is-missing(
+                    map.get($config, "name"),
+                    map.get($config, "group"),
+                    map.get($config, "index"),
+                    "#{$field}::#{$sub-field}" // Форматируем путь ошибки, например: "meta::step"
+                );
+            }
+        }
+    }
+}

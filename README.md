@@ -1,5 +1,6 @@
 # C2C — Config-to-CSS Compiler
 
+[![npm version](https://img.shields.io/npm/v/@rotcetihra/c2c?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/@rotcetihra/c2c)
 [![Sass](https://img.shields.io/badge/Sass-CC6699?style=for-the-badge&logo=sass&logoColor=white)](https://sass-lang.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
@@ -33,18 +34,18 @@
 
 ## 📦 Установка
 
-Вы можете установить компилятор **C2C** как стандартную зависимость через ваш любимый пакетный
+Вы можете установить компилятор **C2C** как стандартную dev-зависимость через ваш любимый пакетный
 менеджер.
 
 ```bash
 # Через npm
-npm install @rotcetihra/c2c
+npm install -D @rotcetihra/c2c
 
 # Через yarn
-yarn add c2c
+yarn add -D @rotcetihra/c2c
 
 # Через pnpm
-pnpm add c2c
+pnpm add -D @rotcetihra/c2c
 ```
 
 ### 🔌 Базовое подключение

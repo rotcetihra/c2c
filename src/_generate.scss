@@ -491,8 +491,10 @@ $REQUIRED: (
                 // РЕЖИМ А: Вычисление процентного соотношения (например, для width, height, left)
                 @if map.get($meta, "divide") {
                     // Предотвращаем деление на ноль, если в конфигурации случайно совпали нули
+                    // prettier-ignore
                     $div-denominator: if(
-                        sass($denominator == 0): 1; else: $denominator,
+                        sass($denominator == 0): 1; 
+                        else: $denominator
                     );
                     $value: math.div($numerator, $div-denominator) * 100;
 

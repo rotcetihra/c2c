@@ -1,6 +1,6 @@
 {
     "name": "@rotcetihra/c2c",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "description": "Атомарный CSS-компилятор на Sass, работающий на основе конфигурационных файлов по принципу AOT.",
     "main": "src/_index.scss",
     "sass": "src/_index.scss",
